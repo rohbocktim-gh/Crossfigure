@@ -10,13 +10,22 @@ android {
 
     defaultConfig {
         applicationId = "app.crossfigure"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 36
         versionCode = (System.getenv("VERSION_CODE") ?: "1").toInt()
-        versionName = "1.0"
+        versionName = "1.1"
     }
 
     val keystorePath: String? = System.getenv("KEYSTORE_FILE")
+
+    // Google's public test ad IDs. Debug builds always use these.
+    val testAppId = "ca-app-pub-3940256099942544~3347511713"
+    val testBannerId = "ca-app-pub-3940256099942544/6300978111"
+
+    // Release builds use your real AdMob IDs if the ADMOB_APP_ID and
+    // ADMOB_BANNER_ID repository variables are set; otherwise test IDs.
+    val liveAppId = System.getenv("ADMOB_APP_ID")?.takeIf { it.isNotBlank() } ?: testAppId
+    val liveBannerId = System.getenv("ADMOB_BANNER_ID")?.takeIf { it.isNotBlank() } ?: testBannerId
 
     signingConfigs {
         if (keystorePath != null) {
@@ -30,8 +39,14 @@ android {
     }
 
     buildTypes {
+        debug {
+            manifestPlaceholders["admobAppId"] = testAppId
+            buildConfigField("String", "ADMOB_BANNER_ID", "" + '"' + testBannerId + '"')
+        }
         release {
             isMinifyEnabled = false
+            manifestPlaceholders["admobAppId"] = liveAppId
+            buildConfigField("String", "ADMOB_BANNER_ID", "" + '"' + liveBannerId + '"')
             if (keystorePath != null) {
                 signingConfig = signingConfigs.getByName("release")
             }
@@ -45,6 +60,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -55,4 +71,6 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
+    implementation("com.google.android.gms:play-services-ads:24.4.0")
+    implementation("com.google.android.ump:user-messaging-platform:3.2.0")
 }
