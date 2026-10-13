@@ -23,10 +23,12 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -118,27 +120,92 @@ fun BannerAd(unitId: String) {
 fun GameHost() {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("crossfigure", Context.MODE_PRIVATE) }
+    val total = ALL_PUZZLES.size
     var index by remember {
-        mutableIntStateOf(prefs.getInt("puzzle", 0).coerceIn(0, PUZZLES.size - 1))
+        mutableIntStateOf(prefs.getInt("puzzle", 0).coerceIn(0, total - 1))
     }
+    var solved by remember {
+        mutableStateOf<Set<Int>>(
+            (prefs.getStringSet("solved", emptySet()) ?: emptySet())
+                .mapNotNull { it.toIntOrNull() }
+                .toSet()
+        )
+    }
+    var showPicker by remember { mutableStateOf(false) }
+
+    fun goTo(i: Int) {
+        if (i < 0 || i >= total) return
+        index = i
+        prefs.edit().putInt("puzzle", i).apply()
+    }
+
+    fun markSolved(i: Int) {
+        if (solved.contains(i)) return
+        solved = solved + i
+        prefs.edit().putStringSet("solved", solved.map { it.toString() }.toSet()).apply()
+    }
+
     key(index) {
         GameScreen(
-            puzzle = PUZZLES[index],
+            puzzle = ALL_PUZZLES[index],
             number = index + 1,
-            total = PUZZLES.size,
-            onPrev = {
-                if (index > 0) {
-                    index--
-                    prefs.edit().putInt("puzzle", index).apply()
-                }
+            total = total,
+            solvedCount = solved.size,
+            onPrev = { goTo(index - 1) },
+            onNext = { goTo(index + 1) },
+            onPick = { showPicker = true },
+            onSolved = { markSolved(index) },
+        )
+    }
+
+    if (showPicker) {
+        AlertDialog(
+            onDismissRequest = { showPicker = false },
+            confirmButton = {
+                TextButton(onClick = { showPicker = false }) { Text("Close") }
             },
-            onNext = {
-                if (index < PUZZLES.size - 1) {
-                    index++
-                    prefs.edit().putInt("puzzle", index).apply()
+            title = { Text("Choose a puzzle") },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    val perRow = 5
+                    var start = 0
+                    while (start < total) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            for (i in start until minOf(start + perRow, total)) {
+                                LevelChip(
+                                    label = (i + 1).toString(),
+                                    done = solved.contains(i),
+                                    current = i == index,
+                                    onClick = {
+                                        goTo(i)
+                                        showPicker = false
+                                    },
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        start += perRow
+                    }
                 }
             },
         )
+    }
+}
+
+@Composable
+fun LevelChip(label: String, done: Boolean, current: Boolean, onClick: () -> Unit) {
+    val bg = if (done) Color(0xFFCDEBC5) else Color(0xFFE3E3E8)
+    val edge = if (current) Color(0xFF1E2A44) else Color(0xFFB0B0B8)
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        modifier = Modifier
+            .size(46.dp)
+            .background(bg, shape)
+            .border(BorderStroke(if (current) 3.dp else 1.dp, edge), shape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color(0xFF111111))
     }
 }
 
@@ -147,8 +214,11 @@ fun GameScreen(
     puzzle: Puzzle,
     number: Int,
     total: Int,
+    solvedCount: Int,
     onPrev: () -> Unit,
     onNext: () -> Unit,
+    onPick: () -> Unit,
+    onSolved: () -> Unit,
 ) {
     val n = puzzle.size
     val entries = remember {
@@ -159,6 +229,16 @@ fun GameScreen(
     var acrossDir by remember { mutableStateOf(true) }
     var showChecks by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
+
+    fun allCorrect(): Boolean {
+        for (r in 0 until n) {
+            for (c in 0 until n) {
+                if (puzzle.isBlock(r, c)) continue
+                if (entries[r * n + c] != puzzle.solution(r, c)) return false
+            }
+        }
+        return true
+    }
 
     fun checkMessage(): String {
         var wrong = 0
@@ -197,6 +277,11 @@ fun GameScreen(
         entries[selR * n + selC] = ch
         showChecks = false
         message = ""
+        if (allCorrect()) {
+            message = "Solved! Nice work. Tap Next for another puzzle."
+            onSolved()
+            return
+        }
         val cells = puzzle.cellsOfWord(selR, selC, acrossDir)
         val i = cells.indexOf(selR to selC)
         if (i >= 0 && i < cells.size - 1) {
@@ -241,6 +326,10 @@ fun GameScreen(
             Button(onClick = onPrev, enabled = number > 1) { Text("Prev") }
             Text("Puzzle " + number + " of " + total, fontSize = 16.sp, color = ink)
             Button(onClick = onNext, enabled = number < total) { Text("Next") }
+        }
+        Spacer(Modifier.height(4.dp))
+        Button(onClick = onPick) {
+            Text("Choose puzzle (" + solvedCount + " solved)")
         }
         Spacer(Modifier.height(12.dp))
 
@@ -292,6 +381,7 @@ fun GameScreen(
             Button(onClick = {
                 showChecks = true
                 message = checkMessage()
+                if (allCorrect()) onSolved()
             }) { Text("Check") }
             Button(onClick = {
                 for (r in 0 until n) {
