@@ -1,5 +1,6 @@
 package app.crossfigure
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -28,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -36,111 +38,118 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import com.google.android.gms.ads.AdRequest
+import com.google.android.gms.ads.AdSize
+import com.google.android.gms.ads.AdView
+import com.google.android.gms.ads.MobileAds
+import com.google.android.ump.ConsentRequestParameters
+import com.google.android.ump.UserMessagingPlatform
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : ComponentActivity() {
+    private var adsReady by mutableStateOf(false)
+    private val adsStarted = AtomicBoolean(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFFFAFAFA)) {
-                    CrossfigureScreen()
+                    Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            GameHost()
+                        }
+                        if (adsReady) {
+                            BannerAd(BuildConfig.ADMOB_BANNER_ID)
+                        }
+                    }
                 }
             }
         }
+        setUpAds()
     }
-}
 
-class Puzzle(
-    val rows: List<String>,
-    val across: Map<Int, String>,
-    val down: Map<Int, String>,
-) {
-    val size: Int = rows.size
-    val numbers: Map<Pair<Int, Int>, Int> = buildNumbers()
-
-    fun isBlock(r: Int, c: Int): Boolean = rows[r][c] == '#'
-
-    fun solution(r: Int, c: Int): Char = rows[r][c]
-
-    private fun isOpen(r: Int, c: Int): Boolean =
-        r in 0 until size && c in 0 until size && rows[r][c] != '#'
-
-    private fun startsAcross(r: Int, c: Int): Boolean =
-        isOpen(r, c) && !isOpen(r, c - 1) && isOpen(r, c + 1)
-
-    private fun startsDown(r: Int, c: Int): Boolean =
-        isOpen(r, c) && !isOpen(r - 1, c) && isOpen(r + 1, c)
-
-    private fun buildNumbers(): Map<Pair<Int, Int>, Int> {
-        val result = mutableMapOf<Pair<Int, Int>, Int>()
-        var next = 1
-        for (r in 0 until size) {
-            for (c in 0 until size) {
-                if (startsAcross(r, c) || startsDown(r, c)) {
-                    result[r to c] = next
-                    next++
+    private fun setUpAds() {
+        val consentInfo = UserMessagingPlatform.getConsentInformation(this)
+        val params = ConsentRequestParameters.Builder().build()
+        consentInfo.requestConsentInfoUpdate(
+            this,
+            params,
+            {
+                UserMessagingPlatform.loadAndShowConsentFormIfRequired(this) {
+                    if (consentInfo.canRequestAds()) startAds()
                 }
-            }
-        }
-        return result
+            },
+            {
+                if (consentInfo.canRequestAds()) startAds()
+            },
+        )
+        if (consentInfo.canRequestAds()) startAds()
     }
 
-    fun wordStart(r: Int, c: Int, acrossDir: Boolean): Pair<Int, Int> {
-        var rr = r
-        var cc = c
-        if (acrossDir) {
-            while (isOpen(rr, cc - 1)) cc--
-        } else {
-            while (isOpen(rr - 1, cc)) rr--
+    private fun startAds() {
+        if (!adsStarted.compareAndSet(false, true)) return
+        MobileAds.initialize(this) {
+            runOnUiThread { adsReady = true }
         }
-        return rr to cc
-    }
-
-    fun cellsOfWord(r: Int, c: Int, acrossDir: Boolean): List<Pair<Int, Int>> {
-        val start = wordStart(r, c, acrossDir)
-        val out = mutableListOf<Pair<Int, Int>>()
-        var rr = start.first
-        var cc = start.second
-        while (isOpen(rr, cc)) {
-            out.add(rr to cc)
-            if (acrossDir) cc++ else rr++
-        }
-        return out
-    }
-
-    fun hasWord(r: Int, c: Int, acrossDir: Boolean): Boolean =
-        cellsOfWord(r, c, acrossDir).size > 1
-
-    fun clueFor(r: Int, c: Int, acrossDir: Boolean): String {
-        val start = wordStart(r, c, acrossDir)
-        val num = numbers[start] ?: return ""
-        val text = (if (acrossDir) across else down)[num] ?: ""
-        return num.toString() + (if (acrossDir) "A" else "D") + ": " + text
     }
 }
-
-val PUZZLES = listOf(
-    Puzzle(
-        rows = listOf("STARE", "H#R#V", "OLIVE", "R#S#N", "ELECT"),
-        across = mapOf(
-            1 to "Look intently",
-            4 to "Martini garnish",
-            5 to "Choose by ballot",
-        ),
-        down = mapOf(
-            1 to "Where waves meet land",
-            2 to "Get out of bed",
-            3 to "Race or ceremony",
-        ),
-    ),
-)
 
 @Composable
-fun CrossfigureScreen() {
-    val puzzle = remember { PUZZLES[0] }
+fun BannerAd(unitId: String) {
+    AndroidView(
+        modifier = Modifier.fillMaxWidth(),
+        factory = { context ->
+            AdView(context).apply {
+                setAdSize(AdSize.BANNER)
+                adUnitId = unitId
+                loadAd(AdRequest.Builder().build())
+            }
+        },
+    )
+}
+
+@Composable
+fun GameHost() {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("crossfigure", Context.MODE_PRIVATE) }
+    var index by remember {
+        mutableIntStateOf(prefs.getInt("puzzle", 0).coerceIn(0, PUZZLES.size - 1))
+    }
+    key(index) {
+        GameScreen(
+            puzzle = PUZZLES[index],
+            number = index + 1,
+            total = PUZZLES.size,
+            onPrev = {
+                if (index > 0) {
+                    index--
+                    prefs.edit().putInt("puzzle", index).apply()
+                }
+            },
+            onNext = {
+                if (index < PUZZLES.size - 1) {
+                    index++
+                    prefs.edit().putInt("puzzle", index).apply()
+                }
+            },
+        )
+    }
+}
+
+@Composable
+fun GameScreen(
+    puzzle: Puzzle,
+    number: Int,
+    total: Int,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+) {
     val n = puzzle.size
     val entries = remember {
         mutableStateListOf<Char>().apply { repeat(n * n) { add(' ') } }
@@ -166,7 +175,7 @@ fun CrossfigureScreen() {
             }
         }
         return when {
-            wrong == 0 && empty == 0 -> "Solved! Nice work."
+            wrong == 0 && empty == 0 -> "Solved! Nice work. Tap Next for another puzzle."
             wrong > 0 -> "Red letters are wrong."
             else -> "No mistakes so far, keep going."
         }
@@ -219,12 +228,20 @@ fun CrossfigureScreen() {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .systemBarsPadding()
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text("Crossfigure", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = ink)
+        Spacer(Modifier.height(8.dp))
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Button(onClick = onPrev, enabled = number > 1) { Text("Prev") }
+            Text("Puzzle " + number + " of " + total, fontSize = 16.sp, color = ink)
+            Button(onClick = onNext, enabled = number < total) { Text("Next") }
+        }
         Spacer(Modifier.height(12.dp))
 
         for (r in 0 until n) {
